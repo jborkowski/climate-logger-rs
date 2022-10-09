@@ -20,6 +20,7 @@ heapless = "0.7.16"
 shared-bus = "0.2.4"
 embedded-sdmmc = "0.3.0"
 
+
 esp-println = { version = "0.3.1", features = [ "esp32" ] }
 esp-backtrace = { version = "0.2.0", features = ["esp32", "panic-handler", "print-uart"] }
 xtensa-lx-rt = { version = "0.13.0", features = ["esp32"], optional = true }

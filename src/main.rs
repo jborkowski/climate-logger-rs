@@ -2,12 +2,13 @@
 #![no_main]
 
 use esp32_hal::clock::*;
-use esp32_hal::pac::{rtc_i2c, I2C0};
-use esp32_hal::{gpio, i2c::I2C, pac::Peripherals, prelude::*, timer::TimerGroup, Delay, Rtc, IO};
+use esp32_hal::spi::SpiMode;
+use esp32_hal::{
+    i2c::I2C, pac::Peripherals, prelude::*, timer::TimerGroup, Delay, Rtc, IO, spi::Spi,
+};
 use esp_backtrace as _;
 use esp_println::println;
 use profont::PROFONT_12_POINT;
-use shared_bus::*;
 
 use esp32_hal::prelude::_fugit_RateExtU32;
 
@@ -18,7 +19,7 @@ use ssd1306::prelude::*;
 use ssd1306::rotation::DisplayRotation;
 
 use ssd1306::{
-    mode::{BufferedGraphicsMode, DisplayConfig},
+    mode::DisplayConfig,
     I2CDisplayInterface, Ssd1306,
 };
 
@@ -31,7 +32,9 @@ use embedded_graphics::{
 
 use heapless::String;
 
-use ds1307::{DateTimeAccess, Ds1307, NaiveDate};
+use ds1307::{DateTimeAccess, Ds1307};
+
+use embedded_sdmmc::*;
 
 #[xtensa_lx_rt::entry]
 fn main() -> ! {
@@ -86,7 +89,30 @@ fn main() -> ! {
     // let datetime = NaiveDate::from_ymd(2022, 10, 9).and_hms(18, 35, 10);
     // rtc.set_datetime(&datetime).unwrap();
 
+    // init SDMMC
+    let sclk = io.pins.gpio18;
+    let miso = io.pins.gpio19;
+    let mosi = io.pins.gpio23;
+    let cs = io.pins.gpio5.into_push_pull_output();
 
+    let spi = Spi::new_no_cs(
+        peripherals.SPI2,
+        sclk,
+        mosi,
+        miso,
+        400u32.kHz(),
+        SpiMode::Mode0,
+        &mut system.peripheral_clock_control,
+        &clocks,
+    );
+
+
+    let spi_dev = SdMmcSpi::new(spi, cs);
+    let mut sd_controller = Controller::new(spi_dev, FakeTime {});
+
+    println!("Init SD card...");
+    let card = sd_controller.device().init().unwrap();
+    println!("Card size {}", sd_controller.device().card_size_bytes().unwrap());
 
     loop {
         match dht22::Reading::read(&mut delay, &mut gpio4) {
@@ -122,18 +148,17 @@ fn main() -> ! {
                     .draw(&mut display)
                     .unwrap();
 
-		// let mut datetime = String::new();
+                // let mut datetime = String::new();
 
-		// write!(&datetime, "{}", rtc.datetime().unwrap());
+                // write!(&datetime, "{}", rtc.datetime().unwrap());
 
-		// Text::with_baseline(&datetime, Point::new(0, 0), text_style, Baseline::Top)
+                // Text::with_baseline(&datetime, Point::new(0, 0), text_style, Baseline::Top)
                 //     .draw(&mut display)
                 //     .unwrap();
 
-
                 display.flush().unwrap();
 
-		println!("{}", rtc.datetime().unwrap());
+                println!("{}", rtc.datetime().unwrap());
 
                 println!("{}°, {}% RH", temperature, relative_humidity)
             }
@@ -144,22 +169,11 @@ fn main() -> ! {
     }
 }
 
-// fn init_display(
-//     display_interface: I2CDisplayInterface,
-// ) -> Ssd1306<
-//     I2CInterface<I2C<I2C0>>,
-//     ssd1306::prelude::DisplaySize128x64,
-//     BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>,
-// > {
-//     let display_interface = I2CDisplayInterface::new(i2c);
-//     let mut display = Ssd1306::new(
-//         display_interface,
-//         DisplaySize128x64,
-//         DisplayRotation::Rotate0,
-//     )
-//     .into_buffered_graphics_mode();
 
-//     display.init().unwrap();
+struct FakeTime;
 
-//     return display;
-// }
+impl TimeSource for FakeTime {
+    fn get_timestamp(&self) -> Timestamp {
+        Timestamp::from_calendar(1019, 11, 24, 3, 40, 31).unwrap()
+    }
+}
