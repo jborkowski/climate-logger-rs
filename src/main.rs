@@ -2,12 +2,12 @@
 #![no_main]
 
 use esp32_hal::clock::*;
-use esp32_hal::pac::I2C0;
+use esp32_hal::pac::{rtc_i2c, I2C0};
 use esp32_hal::{gpio, i2c::I2C, pac::Peripherals, prelude::*, timer::TimerGroup, Delay, Rtc, IO};
 use esp_backtrace as _;
-use esp_hal_common::{system::PeripheralClockControl, Unknown};
 use esp_println::println;
 use profont::PROFONT_12_POINT;
+use shared_bus::*;
 
 use esp32_hal::prelude::_fugit_RateExtU32;
 
@@ -26,10 +26,12 @@ use embedded_graphics::{
     mono_font::MonoTextStyle,
     pixelcolor::BinaryColor,
     prelude::*,
-    text::{Alignment, Baseline, Text},
+    text::{Baseline, Text},
 };
 
 use heapless::String;
+
+use ds1307::{DateTimeAccess, Ds1307, NaiveDate};
 
 #[xtensa_lx_rt::entry]
 fn main() -> ! {
@@ -52,17 +54,39 @@ fn main() -> ! {
     let mut delay = Delay::new(&clocks);
     let mut gpio4 = io.pins.gpio4.into_open_drain_output();
 
-    let mut display = init_display(
+    let i2c = I2C::new(
         peripherals.I2C0,
         io.pins.gpio33,
         io.pins.gpio32,
+        100u32.kHz(),
         &mut system.peripheral_clock_control,
         &clocks,
-    );
+    )
+    .unwrap();
+
+    let i2c_bus = shared_bus::BusManagerSimple::new(i2c);
+
+    // init Display
+    let display_interface = I2CDisplayInterface::new(i2c_bus.acquire_i2c());
+    let mut display = Ssd1306::new(
+        display_interface,
+        DisplaySize128x64,
+        DisplayRotation::Rotate0,
+    )
+    .into_buffered_graphics_mode();
+
+    display.init().unwrap();
 
     let text_style = MonoTextStyle::new(&PROFONT_12_POINT, BinaryColor::On);
 
     display.flush().unwrap();
+
+    // init RTC
+    let mut rtc = Ds1307::new(i2c_bus.acquire_i2c());
+    // let datetime = NaiveDate::from_ymd(2022, 10, 9).and_hms(18, 35, 10);
+    // rtc.set_datetime(&datetime).unwrap();
+
+
 
     loop {
         match dht22::Reading::read(&mut delay, &mut gpio4) {
@@ -77,15 +101,20 @@ fn main() -> ! {
                 hum_string.push_str("% RHr").unwrap();
                 display.clear();
 
-                Text::with_baseline("Temperature: ", Point::new(0, 16), text_style, Baseline::Top)
-                    .draw(&mut display)
-                    .unwrap();
+                Text::with_baseline(
+                    "Temperature: ",
+                    Point::new(0, 16),
+                    text_style,
+                    Baseline::Top,
+                )
+                .draw(&mut display)
+                .unwrap();
 
                 Text::with_baseline(&deg_string, Point::new(97, 16), text_style, Baseline::Top)
                     .draw(&mut display)
                     .unwrap();
 
-		Text::with_baseline("Humidity: ", Point::new(0, 32), text_style, Baseline::Top)
+                Text::with_baseline("Humidity: ", Point::new(0, 32), text_style, Baseline::Top)
                     .draw(&mut display)
                     .unwrap();
 
@@ -93,7 +122,18 @@ fn main() -> ! {
                     .draw(&mut display)
                     .unwrap();
 
+		// let mut datetime = String::new();
+
+		// write!(&datetime, "{}", rtc.datetime().unwrap());
+
+		// Text::with_baseline(&datetime, Point::new(0, 0), text_style, Baseline::Top)
+                //     .draw(&mut display)
+                //     .unwrap();
+
+
                 display.flush().unwrap();
+
+		println!("{}", rtc.datetime().unwrap());
 
                 println!("{}°, {}% RH", temperature, relative_humidity)
             }
@@ -104,28 +144,22 @@ fn main() -> ! {
     }
 }
 
-fn init_display(
-    i2c: I2C0,
-    sda: gpio::Gpio33<Unknown>,
-    scl: gpio::Gpio32<Unknown>,
-    pcc: &mut PeripheralClockControl,
-    clocks: &Clocks,
-) -> Ssd1306<
-    I2CInterface<I2C<I2C0>>,
-    ssd1306::prelude::DisplaySize128x64,
-    BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>,
-> {
-    let i2c = I2C::new(i2c, sda, scl, 100u32.kHz(), pcc, clocks).unwrap();
+// fn init_display(
+//     display_interface: I2CDisplayInterface,
+// ) -> Ssd1306<
+//     I2CInterface<I2C<I2C0>>,
+//     ssd1306::prelude::DisplaySize128x64,
+//     BufferedGraphicsMode<ssd1306::prelude::DisplaySize128x64>,
+// > {
+//     let display_interface = I2CDisplayInterface::new(i2c);
+//     let mut display = Ssd1306::new(
+//         display_interface,
+//         DisplaySize128x64,
+//         DisplayRotation::Rotate0,
+//     )
+//     .into_buffered_graphics_mode();
 
-    let display_interface = I2CDisplayInterface::new(i2c);
-    let mut display = Ssd1306::new(
-        display_interface,
-        DisplaySize128x64,
-        DisplayRotation::Rotate0,
-    )
-    .into_buffered_graphics_mode();
+//     display.init().unwrap();
 
-    display.init().unwrap();
-
-    return display;
-}
+//     return display;
+// }
